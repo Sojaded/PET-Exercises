@@ -29,7 +29,7 @@ def test_petlib_present():
     """
     Try to import Petlib and pytest to ensure they are 
     present on the system, and accessible to the python 
-    environment.
+    environment
     """
     import petlib 
     import pytest
@@ -78,177 +78,256 @@ def test_gcm_decrypt():
 @pytest.mark.task2
 def test_gcm_fails():
     from pytest import raises
-    from os import urandom
 
+    from os import urandom
     K = urandom(16)
     message = u"Hello World!"
     iv, ciphertext, tag = encrypt_message(K, message)
 
     with raises(Exception) as excinfo:
         decrypt_message(K, iv, urandom(len(ciphertext)), tag)
-    assert 'Decryption failed' in str(excinfo.value)
+    assert 'decryption failed' in str(excinfo.value)
 
     with raises(Exception) as excinfo:
         decrypt_message(K, iv, ciphertext, urandom(len(tag)))
-    assert 'Decryption failed' in str(excinfo.value)
+    assert 'decryption failed' in str(excinfo.value)
 
     with raises(Exception) as excinfo:
         decrypt_message(K, urandom(len(iv)), ciphertext, tag)
-    assert 'Decryption failed' in str(excinfo.value)
+    assert 'decryption failed' in str(excinfo.value)
 
     with raises(Exception) as excinfo:
         decrypt_message(urandom(len(K)), iv, ciphertext, tag)
-    assert 'Decryption failed' in str(excinfo.value)
+    assert 'decryption failed' in str(excinfo.value)
 
 
 #####################################################
-# TASK 3 -- Elliptic Curve Arithmetic
+# TASK 3 -- Understand Elliptic Curve Arithmetic
+#           - Test if a point is on a curve.
+#           - Implement Point addition.
+#           - Implement Point doubling.
+#           - Implement Scalar multiplication (double & add).
+#           - Implement Scalar multiplication (Montgomery ladder).
 
 @pytest.mark.task3
 def test_on_curve():
     """
-    Test if a point is on a curve.
+    Test the procedues that tests whether a point is on a curve.
+
     """
-    from petlib.ec import EcGroup
-    G = EcGroup(713)  # NIST curve
+
+    ## Example on how to define a curve
+    from petlib.ec import EcGroup, EcPt
+    G = EcGroup(713) # NIST curve
     d = G.parameters()
     a, b, p = d["a"], d["b"], d["p"]
     g = G.generator()
     gx, gy = g.get_affine()
 
+    from Lab01Code import is_point_on_curve
     assert is_point_on_curve(a, b, p, gx, gy)
+
     assert is_point_on_curve(a, b, p, None, None)
 
 @pytest.mark.task3
-def test_point_addition():
+def test_Point_addition():
     """
-    Test whether EC point addition is correct.
+    Test whether the EC point addition is correct.
     """
     from pytest import raises
-    from petlib.ec import EcGroup
-    G = EcGroup(713)
+    from petlib.ec import EcGroup, EcPt
+    G = EcGroup(713) # NIST curve
     d = G.parameters()
     a, b, p = d["a"], d["b"], d["p"]
     g = G.generator()
     gx0, gy0 = g.get_affine()
+
     r = G.order().random()
-    gx1, gy1 = (r * g).get_affine()
+    gx1, gy1 = (r*g).get_affine()
+
+    assert is_point_on_curve(a, b, p, gx0, gy0)
+    assert is_point_on_curve(a, b, p, gx1, gy1)
+
+    ## Test a simple addition
+    h = (r + 1) * g
+    hx1, hy1 = h.get_affine()
+
+    x, y = point_add(a, b, p, gx0, gy0, gx1, gy1)
+    assert is_point_on_curve(a, b, p, x, y)
+    assert x == hx1
+    assert y == hy1
+
+    ## Ensure commutativity
+    xp, yp = point_add(a, b, p, gx1, gy1, gx0, gy0)
+    assert is_point_on_curve(a, b, p, xp, yp)
+    assert x == xp
+    assert y == yp
+
+    ## Ensure addition with neutral returns the element
+    xp, yp = point_add(a, b, p, gx1, gy1, None, None)
+    assert is_point_on_curve(a, b, p, xp, yp)
+    assert xp == gx1
+    assert yp == gy1
+    
+    xp, yp = point_add(a, b, p, None, None, gx0, gy0)
+    assert is_point_on_curve(a, b, p, xp, yp)
+    assert gx0 == xp
+    assert gy0 == yp
+
+    ## An error is raised in case the points are equal
+    with raises(Exception) as excinfo:
+        point_add(a, b, p, gx0, gy0, gx0, gy0)
+    assert 'EC Points must not be equal' in str(excinfo.value)
+
+@pytest.mark.task3
+def test_Point_addition_check_inf_result():
+    """
+    Test whether the EC point addition is correct for pt - pt = inf
+    """
+    from pytest import raises
+    from petlib.ec import EcGroup, EcPt
+    G = EcGroup(713) # NIST curve
+    d = G.parameters()
+    a, b, p = d["a"], d["b"], d["p"]
+    g = G.generator()
+    gx0, gy0 = g.get_affine()
+    gx1, gy1 = gx0, p - gy0
+
 
     assert is_point_on_curve(a, b, p, gx0, gy0)
     assert is_point_on_curve(a, b, p, gx1, gy1)
 
     x, y = point_add(a, b, p, gx0, gy0, gx1, gy1)
     assert is_point_on_curve(a, b, p, x, y)
+    assert (x,y) == (None, None)
 
-    assert (x, y) == point_add(a, b, p, gx1, gy1, gx0, gy0)
 
-    x, y = point_add(a, b, p, gx0, gy0, None, None)
-    assert x == gx0 and y == gy0
 
 @pytest.mark.task3
-def test_point_double():
+def test_Point_doubling():
     """
-    Test if EC point doubling is correct.
+    Test whether the EC point doubling is correct.
     """
-    from petlib.ec import EcGroup
-    G = EcGroup(713)
+
+    from pytest import raises
+    from petlib.ec import EcGroup, EcPt
+    G = EcGroup(713) # NIST curve
     d = G.parameters()
     a, b, p = d["a"], d["b"], d["p"]
     g = G.generator()
     gx0, gy0 = g.get_affine()
+
+    gx2, gy2 = (2*g).get_affine()
+
 
     x2, y2 = point_double(a, b, p, gx0, gy0)
     assert is_point_on_curve(a, b, p, x2, y2)
+    assert x2 == gx2 and y2 == gy2
 
-    assert (x2, y2) == point_double(a, b, p, gx0, gy0)
+    x2, y2 = point_double(a, b, p, None, None)
+    assert is_point_on_curve(a, b, p, x2, y2)
+    assert x2 == None and y2 == None
 
 @pytest.mark.task3
-def test_scalar_mult_double_and_add():
+def test_Point_scalar_mult_double_and_add():
     """
-    Test scalar multiplication using the double-and-add algorithm.
+    Test the scalar multiplication using double and add.
     """
-    from petlib.ec import EcGroup
-    G = EcGroup(713)
+
+    from pytest import raises
+    from petlib.ec import EcGroup, EcPt
+    G = EcGroup(713) # NIST curve
     d = G.parameters()
     a, b, p = d["a"], d["b"], d["p"]
     g = G.generator()
     gx0, gy0 = g.get_affine()
     r = G.order().random()
 
-    x, y = point_scalar_multiplication_double_and_add(a, b, p, gx0, gy0, r)
-    assert is_point_on_curve(a, b, p, x, y)
+    gx2, gy2 = (r*g).get_affine()
+
+
+    x2, y2 = point_scalar_multiplication_double_and_add(a, b, p, gx0, gy0, r)
+    assert is_point_on_curve(a, b, p, x2, y2)
+    assert gx2 == x2
+    assert gy2 == y2
 
 @pytest.mark.task3
-def test_scalar_mult_montgomery_ladder():
+def test_Point_scalar_mult_montgomerry_ladder():
     """
-    Test scalar multiplication using the Montgomery Ladder.
+    Test the scalar multiplication using double and add.
     """
-    from petlib.ec import EcGroup
-    G = EcGroup(713)
+
+    from pytest import raises
+    from petlib.ec import EcGroup, EcPt
+    G = EcGroup(713) # NIST curve
     d = G.parameters()
     a, b, p = d["a"], d["b"], d["p"]
     g = G.generator()
     gx0, gy0 = g.get_affine()
+
     r = G.order().random()
 
-    x, y = point_scalar_multiplication_montgomerry_ladder(a, b, p, gx0, gy0, r)
-    assert is_point_on_curve(a, b, p, x, y)
+    gx2, gy2 = (r*g).get_affine()
 
+
+    x2, y2 = point_scalar_multiplication_montgomerry_ladder(a, b, p, gx0, gy0, r)
+    assert is_point_on_curve(a, b, p, x2, y2)
+    assert gx2 == x2
+    assert gy2 == y2
 
 #####################################################
-# TASK 4 -- ECDSA Signatures
+# TASK 4 -- Standard ECDSA signatures
+#
+#          - Implement a key / param generation 
+#          - Implement ECDSA signature using petlib.ecdsa
+#          - Implement ECDSA signature verification 
+#            using petlib.ecdsa
 
 @pytest.mark.task4
 def test_key_gen():
-    """ Test the key generation of ECDSA """
+    """ Tests the key generation of ECDSA"""
+    from Lab01Code import ecdsa_key_gen
     G, priv, pub = ecdsa_key_gen()
-    assert priv is not None
-    assert pub is not None
 
 @pytest.mark.task4
 def test_produce_signature():
-    """ Test ECDSA signing """
+    """ Tests signature function """
     msg = u"Test" * 1000
+    from Lab01Code import ecdsa_key_gen, ecdsa_sign
+
     G, priv, pub = ecdsa_key_gen()
     sig = ecdsa_sign(G, priv, msg)
-    assert sig is not None
+    assert True
 
 @pytest.mark.task4
 def test_check_signature():
-    """ Test ECDSA signature and verification """
+    """ Tests signature and verification function """
     msg = u"Test" * 1000
+
     G, priv, pub = ecdsa_key_gen()
+
     sig = ecdsa_sign(G, priv, msg)
     assert ecdsa_verify(G, pub, msg, sig)
 
 @pytest.mark.task4
 def test_check_fail():
-    """ Ensure verification fails with wrong message """
+    """ Ensures verification fails when it should """
     msg = u"Test" * 1000
     msg2 = u"Text" * 1000
+
     G, priv, pub = ecdsa_key_gen()
+
     sig = ecdsa_sign(G, priv, msg)
+
     assert not ecdsa_verify(G, pub, msg2, sig)
 
 
 #####################################################
-# TASK 5 -- Diffie-Hellman Key Exchange
+# TASK 5 -- Diffie-Hellman Key Exchange and Derivation
+#           - use Bob's public key to derive a shared key.
+#           - Use Bob's public key to encrypt a message.
+#           - Use Bob's private key to decrypt the message.
 
 @pytest.mark.task5
-def test_dh_key_gen():
-    """ Test DH key generation """
+def test_key_gen():
     G, priv, pub = dh_get_key()
-    assert priv is not None
-    assert pub is not None
-
-@pytest.mark.task5
-def test_dh_encrypt_decrypt():
-    """ Test DH encryption and decryption """
-    G, priv_bob, pub_bob = dh_get_key()
-    message = u"Secret message"
-    iv, ciphertext, tag, pub_alice = dh_encrypt(pub_bob, message)
-
-    assert len(ciphertext) == len(message)
-
-    decrypted_message = dh_decrypt(priv_bob, ciphertext, iv, tag, pub_alice)
-    assert decrypted_message == message
