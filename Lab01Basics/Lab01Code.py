@@ -56,79 +56,143 @@ def decrypt_message(K, iv, ciphertext, tag):
 
 #####################################################
 # TASK 3 -- Understand Elliptic Curve Arithmetic
-
+# - Test if a point is on a curve.
+# - Implement Point addition.
+# - Implement Point doubling.
+# - Implement Scalar multiplication (double & add).
+# - Implement Scalar multiplication (Montgomery ladder).
+# MUST NOT USE ANY OF THE petlib.ec FUNCTIONS. Only petlib.bn!
 from petlib.bn import Bn
 
 def is_point_on_curve(a, b, p, x, y):
-    """ Check that a point (x, y) is on the curve defined by a,b and prime p. """
+    """
+    Check that a point (x, y) is on the curve defined by a,b and prime p.
+    Reminder: an Elliptic Curve on a prime field p is defined as:
+    y^2 = x^3 + ax + b (mod p) (Weierstrass form)
+    Return True if point (x,y) is on curve, otherwise False.
+    By convention a (None, None) point represents "infinity".
+    """
     assert isinstance(a, Bn)
     assert isinstance(b, Bn)
     assert isinstance(p, Bn) and p > 0
-    assert (isinstance(x, Bn) and isinstance(y, Bn)) \
-           or (x == None and y == None)
-
+    assert (isinstance(x, Bn) and isinstance(y, Bn)) or (x == None and y == None)
+    
+    # Special case for point at infinity
     if x == None and y == None:
         return True
-
-    lhs = (y * y) % p
-    rhs = (x * x * x + a * x + b) % p
-    return lhs == rhs
-
-def is_none_point(x, y):
-    """ Helper function to check if a point is None (the identity point). """
-    return x is None and y is None
+    
+    # Check if the point satisfies the elliptic curve equation
+    lhs = (y * y) % p  # left-hand side: y^2 mod p
+    rhs = (x * x * x + a * x + b) % p  # right-hand side: x^3 + ax + b mod p
+    on_curve = (lhs == rhs)
+    return on_curve
 
 def point_add(a, b, p, x0, y0, x1, y1):
-    """ Define the "addition" operation for 2 EC Points. """
+    """
+    Define the "addition" operation for 2 EC Points.
+    Reminder: (xr, yr) = (xq, yq) + (xp, yp)
+    is defined as:
+    lam = (yq - yp) * (xq - xp)^-1 (mod p)
+    xr = lam^2 - xp - xq (mod p)
+    yr = lam * (xp - xr) - yp (mod p)
+    Return the point resulting from the addition. Raises an Exception if the points are equal.
+    """
+    # Handle special cases where one point is at infinity
     if is_none_point(x0, y0):
         return (x1, y1)
     if is_none_point(x1, y1):
         return (x0, y0)
-
+    
+    # Handle case where the points are inverses of each other
     if x0 == x1 and y0 == (p - y1) % p:
         return (None, None)
-
+    
+    # Point doubling case
     if x0 == x1 and y0 == y1:
         lam = ((3 * x0 * x0 + a) * (2 * y0).mod_inverse(p)) % p
-    else:
+    else:  # Point addition case
         lam = ((y1 - y0) * (x1 - x0).mod_inverse(p)) % p
-
+    
+    # Calculate resulting point coordinates
     xr = (lam * lam - x0 - x1) % p
     yr = (lam * (x0 - xr) - y0) % p
     return xr, yr
 
 def point_double(a, b, p, x, y):
-    """ Define "doubling" an EC point. """
+    """
+    Define "doubling" an EC point.
+    A special case, when a point needs to be added to itself.
+    Reminder:
+    lam = (3 * xp ^ 2 + a) * (2 * yp) ^ -1 (mod p)
+    xr = lam ^ 2 - 2 * xp
+    yr = lam * (xp - xr) - yp (mod p)
+    Returns the point representing the double of the input (x, y).
+    """
+    # Handle special case where y is zero (point at infinity)
     if y == 0:
         return (None, None)
-
+    
+    # Calculate slope (lambda) for point doubling
     lam = ((3 * x * x + a) * (2 * y).mod_inverse(p)) % p
+    
+    # Calculate resulting point coordinates
     xr = (lam * lam - 2 * x) % p
     yr = (lam * (x - xr) - y) % p
     return xr, yr
 
 def point_scalar_multiplication_double_and_add(a, b, p, x, y, scalar):
-    """ Implement Point multiplication with a scalar using Double-and-Add algorithm. """
-    Q = (None, None)
-    P = (x, y)
-    for i in range(scalar.num_bits()):
-        if scalar.is_bit_set(i):
-            Q = point_add(a, b, p, Q[0], Q[1], P[0], P[1])
-        P = point_double(a, b, p, P[0], P[1])
+    """
+    Implement Point multiplication with a scalar:
+    r * (x, y) = (x, y) + ... + (x, y) (r times)
+    Reminder of Double and Multiply algorithm: r * P
+    Q = infinity
+    for i = 0 to num_bits(P)-1
+        if bit i of r == 1 then
+            Q = Q + P
+        P = 2 * P
     return Q
+    """
+    Q = (None, None)  # Start with the identity point
+    P = (x, y)  # Initialize the point to be added
+    
+    # Loop through each bit of the scalar
+    for i in range(scalar.num_bits()):
+        if scalar.is_bit_set(i):  # If bit is set, add the current point P
+            Q = point_add(a, b, p, Q[0], Q[1], P[0], P[1])
+        P = point_double(a, b, p, P[0], P[1])  # Double the point P
+    
+    return Q  # Return the resulting point after all additions
 
 def point_scalar_multiplication_montgomerry_ladder(a, b, p, x, y, scalar):
-    """ Implement Point multiplication with a scalar using Montgomery Ladder. """
-    R0 = (None, None)
-    R1 = (x, y)
-    for i in reversed(range(0, scalar.num_bits())):
-        if scalar.is_bit_set(i):
+    """
+    Implement Point multiplication with a scalar:
+    r * (x, y) = (x, y) + ... + (x, y) (r times)
+    Reminder of Montgomery ladder algorithm:
+    R0 = infinity
+    R1 = P
+    for i in num_bits(P)-1 to zero:
+        if di = 0:
+            R1 = R0 + R1
+            R0 = 2R0
+        else:
+            R0 = R0 + R1
+            R1 = 2R1
+    return R0
+    """
+    R0 = (None, None)  # Initialize the identity point
+    R1 = (x, y)  # Initialize the given point
+    
+    # Loop through each bit of the scalar in reverse order
+    for i in reversed(range(scalar.num_bits())):
+        if scalar.is_bit_set(i):  # If bit is set, perform a specific addition and doubling
             R0 = point_add(a, b, p, R0[0], R0[1], R1[0], R1[1])
             R1 = point_double(a, b, p, R1[0], R1[1])
-        else:
+        else:  # If bit is not set, perform the inverse operations
             R1 = point_add(a, b, p, R0[0], R0[1], R1[0], R1[1])
             R0 = point_double(a, b, p, R0[0], R0[1])
-    return R0
+    
+    return R0  # Return the resulting point
+
 
 #####################################################
 # TASK 4 -- Standard ECDSA signatures
