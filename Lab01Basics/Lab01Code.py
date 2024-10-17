@@ -87,6 +87,10 @@ def is_point_on_curve(a, b, p, x, y):
     on_curve = (lhs == rhs)
     return on_curve
 
+def is_none_point(x,y):
+	#Helper function to check if a point is None(The identity Point)
+	return x is None and y is None
+
 def point_add(a, b, p, x0, y0, x1, y1):
     """
     Define the "addition" operation for 2 EC Points.
